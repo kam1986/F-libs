@@ -1,7 +1,7 @@
 # Self made libraries for F#
 ## Collection
 will when finish have several collection type implementaiton, where some may be more for a exploratory creation like the 
-List.fs which contains a List type as embedded functions.
+List.fs which contains a List type represented as functions.
 
 ## LexPars 
 Is when done a fullfletch lexer and parser generator capable of creating lexers as both a regex machine, NFA and DFA
