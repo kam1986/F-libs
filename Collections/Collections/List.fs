@@ -1,14 +1,17 @@
 ﻿module List
+
+open System.Threading.Tasks
+
+    
 (*
-    persistent single linked list, with constant cons and Appending.
-    OBS : memory usage are biggere than those of none function based, but the different of the List structure designed by Okasaki is that
-    this design can be measured in worst case too.
-
-    A keen observer would see that clever usage of Append can lead to an implementation of unary search trees.
-
-    Assuming that an iteration over Cons has cost c1 and Append has c2 cost, we then have that the total cost of any list takes
-        c1 * k + c2 * (n-k) = (c1 - c2) * k + c2 * n, where k is the number of Cons operation done on that list up until the moment of iteration.
-        We see that if c1 < c2 and k = 0 then the worst case would be c2 * n, and WLG we can say the same for c1 > c2.
+    Persistent single linked list.
+        A list is simply a sequence of functions. 
+        
+        Even though this are quit fast it is not meant for usage, just a mental exercise
+        in a uncommen way of thinking of data structures and the power of functions seen as data.
+        
+    OBS : stack based list and memory usage are biggere than those of none function based structure.
+          
 *)
 
 // This already exist in F# I just like the naming of this better.
@@ -22,7 +25,9 @@ type Result<'success,'error> =
 type Action =
     | Next 
     
-// hide implementation specifiks
+// hide implementation specifics by using a function as a list
+// OBS : the underlying representation of the list are irrelevant as long as the implementation adhire to
+// the expected list functions behavior
 // the inner representation can be any collection structure adhiring to the list commands
 type 'L List = List of (Action -> Result<'L * 'L List,string>) 
 
@@ -58,24 +63,14 @@ let Length lst =
 
     len 0 lst
 
-// Appnd the two list by delaying iterations over lst2 until lst1 is empty.
-// this increase the worst case cost of iteration over an abitrary list composition.
-// but this is neglegent compared to the alternatives.
-let rec Append (List lst1) (List lst2 as lst) =
-    match Next (List lst1) with
-    | Error _ -> List lst2 // eleminates concatination sequences of empty lists 
-    | Result _ ->
-        let list action =
-            match lst1 action with
-            | Result (a, tail) -> Result (a, Append tail lst)
-            | Error _ ->
-                lst2 action
-
-        List list
-
-
 (*
-    OBS : Fold, FoldBack, Map, and Filter all remove concatenation in the list, hence increase later iterations time.
+   Appnd the two list in O(k) time, by delaying iterations over lst2 until lst1 is empty.
+   this increase the worst case cost of iteration over an abitrary list composition.
+   the Head function still runs in O(k) time since we always have that the head of the list 
+   are at top most level
+*)
+(*
+    OBS : Fold, FoldBack, Map, and Filter all remove concatenation in the list, hence decrease later iterations time.
 *)
 
 
@@ -88,11 +83,13 @@ let rec Fold f acc lst =
 let rec FoldBack f lst acc =
     match Next lst with
     | Error _ -> acc
-    | Result (head, tail) -> f (FoldBack f tail acc) head
+    | Result (head, tail) -> f head (FoldBack f tail acc) 
 
 let Rev lst =
     Fold (fun acc a -> Cons a acc) Empty lst
 
+let Append lst1 lst2 =
+    FoldBack (fun a acc -> Cons a acc) lst1 lst2
 (*
     Need to implement Scan and ScanBack
 *)
@@ -100,10 +97,11 @@ let Rev lst =
 
 // properly more efficient with a direct implementation
 let Map f lst =
-    FoldBack (fun acc head -> Cons (f head) acc) lst Empty
+    Fold (fun acc head -> Cons (f head) acc) Empty lst
+    |> Rev
 
 let Filter pred lst =
-    FoldBack (fun xs x -> if pred x then Cons x xs else xs) lst Empty
+    FoldBack (fun x xs -> if pred x then Cons x xs else xs) lst Empty
 
 // handle error case with option type.
 let Reduce f lst =
@@ -118,57 +116,74 @@ let Concat lst =
 
 
 (* 
-    Merge sort
+    Merge sort implementation
     Iterations:
         expand 'a List to 'a List List of singletones i.e. singletons are always ordered.
         loop :
-            merge pairwise each 'a list in the 'a list list into a sorted 'a list
+            merge pairwise each list in the 'a list list into a sorted 'a list
             if 'a list list has only one list left it returns that list
             else repeat
 *)
-let rec MSort lst =
-    let rec sort lst1 lst2 =
-        match Next lst1, Next lst2 with
-        | Error _, _ -> lst2
-        | _, Error _ -> sort Empty lst1
-        | Result (head1, tail), Result (head2, _) when head1 < head2 ->
-            Cons head1 <| sort tail lst2
-        | Result _, Result (head, tail) ->
-            Cons head <| sort lst1 tail
 
-    let rec merge acc llst =
-        match Next llst with
-        | Error _ -> 
-            match Next <| Tail acc with 
-            | Error _ -> // convergence point
-                match Head acc with
-                | Error _ -> Empty
-                | Result lst -> lst
-            | _ -> merge Empty acc // repeat
-
-        | Result (head1, tail) ->
-            match Next tail with
-            | Error _ -> // case of uneven number of list to merge
-                Cons head1 acc 
-                |> merge Empty
-
-            | Result (head2, tail2) ->
-                merge (Cons (sort head1 head2) acc) tail2
-
-
-    Map (fun x -> Cons x Empty) lst // expand to 'a list list of singletone lists
-    |> merge Empty    
+let rec private sort acc lst1 lst2 =
+    match Next lst1, Next lst2 with
+    | Error _, _ -> 
+        Fold (fun acc x -> Cons x acc) acc lst2
+        |> Rev
         
-    
+    | _, Error _ -> 
+        sort acc Empty lst1
+        
+    | Result (head1, tail), Result (head2, _) when head1 < head2 ->
+        sort (Cons head1 acc) tail lst2
 
+    | Result _, Result (head, tail) ->
+        sort (Cons head acc) lst1 tail
+
+let rec private sortAll acc lst =
+    match Next lst with
+    | Result (head, tail) ->
+        match Next tail with
+        | Result (head', tail') ->
+            // this ships of the sorting task to a job queue
+            let task = (new Task<'a List>(fun _ -> sort Empty head head'))
+            task.Start() // run task in parallel
+            let acc' = Cons task acc
+            sortAll acc' tail'
+    
+        | Error _ -> 
+            // fetch results from tasks
+            Map (fun (t : Task<'a List>) -> t.Result) acc 
+            |> Cons head
+
+    // fetch result from tasks.
+    | Error _ -> Map (fun (t : Task<'a List>) -> t.Result) acc
                 
+// stack overflow on big list do to the List representation as functions
+let rec MSort lst  =
+    let rec merge llst =
+        let lst = sortAll Empty llst
+        match Next <| Tail lst with // empty tail if error
+        | Error _ ->
+            match Head lst with
+            | Error _ -> Empty
+            | Result head -> head
+
+        | _ -> merge lst
+                
+                
+
+    // return value
+    Map (fun x -> Cons x Empty) lst // expand to 'a list list of singletone lists
+    // merging and sorting the inner list recursively 
+    |> merge   
 
 
 let ofList lst =
     List.foldBack (fun a acc -> Cons a acc) lst Empty
 
 let toList lst =
-    FoldBack (fun acc a -> a :: acc) lst []
+    FoldBack (fun a acc -> a :: acc) lst []
 
 
 // input a list of F# list as test cases
