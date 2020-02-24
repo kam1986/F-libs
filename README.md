@@ -1,4 +1,4 @@
-#Self made libraries for F#
+# Self made libraries for F#
 ## Collection
 will when finish have several collection type implementaiton, where some may be more for a exploratory creation like the 
 List.fs which contains a List type as embedded functions.
